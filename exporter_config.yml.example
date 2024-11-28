@@ -1,0 +1,14 @@
+# exporter_config.yml
+scripts:
+  - path: ../sofar-monitor.py
+    args:
+      - --format=prometheus
+  
+  - path: /path/to/another/script.py
+    args:
+      - --arg1
+      - --arg2=value
+
+  - path: ./local-script.py
+    args:
+      - --metric-type=custom
