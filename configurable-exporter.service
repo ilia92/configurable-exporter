@@ -5,7 +5,7 @@ After=network.target
 [Service]
 User=your_username
 WorkingDirectory=/path/to/your/exporter
-ExecStart=/usr/bin/python3 configurable_exporter.py --config /path/to/your/exporter_config.yml
+ExecStart=/usr/bin/python3 configurable-exporter.py --config /path/to/your/exporter_config.yml
 Restart=always
 Environment="PYTHONPATH=/path/to/your/exporter"
 

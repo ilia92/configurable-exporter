@@ -1,14 +1,15 @@
 # exporter_config.yml
+
+default_timeout: 30  # Optional: override default 20s timeout for all scripts
+max_workers: 5       # Optional: number of parallel workers (default: number of scripts, max 10)
+
 scripts:
-  - path: ../sofar-monitor.py
-    args:
-      - --format=prometheus
-  
-  - path: /path/to/another/script.py
-    args:
+  - path: /absolute/path/to/script.py  # Absolute path to script
+    args:                              # Optional arguments
       - --arg1
       - --arg2=value
 
-  - path: ./local-script.py
+  - path: ../relative/path/script.py   # Relative path to script
     args:
-      - --metric-type=custom
+      - --format=prometheus
+    timeout: 60                        # Optional: per-script timeout override

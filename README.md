@@ -111,6 +111,9 @@ sudo journalctl -u configurable-exporter
 The configuration file (`exporter_config.yml`) supports the following structure:
 
 ```yaml
+default_timeout: 30  # Optional: override default 20s timeout for all scripts
+max_workers: 5       # Optional: number of parallel workers (default: number of scripts, max 10)
+
 scripts:
   - path: /absolute/path/to/script.py  # Absolute path to script
     args:                              # Optional arguments
@@ -120,7 +123,19 @@ scripts:
   - path: ../relative/path/script.py   # Relative path to script
     args:
       - --format=prometheus
+    timeout: 60                        # Optional: per-script timeout override
 ```
+
+**Configuration Options:**
+
+- `default_timeout`: Global timeout in seconds for all scripts (default: 20s)
+- `max_workers`: Maximum number of scripts to run in parallel (default: number of scripts, capped at 10)
+- `scripts`: List of scripts to execute
+  - `path`: Path to the script (absolute or relative to config file)
+  - `args`: Optional list of command-line arguments
+  - `timeout`: Optional per-script timeout override
+
+**Note:** Scripts are executed in parallel for better performance. The output is combined in the order scripts are defined in the configuration file.
 
 ## Summary
 

@@ -6,13 +6,17 @@ import os
 import yaml
 import logging
 import gunicorn.app.base
-from typing import Dict, List
+from typing import Dict, List, Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+
+# Default timeout in seconds
+DEFAULT_TIMEOUT = 20
 
 def load_config(config_path: str) -> Dict:
     """
@@ -25,10 +29,18 @@ def load_config(config_path: str) -> Dict:
         logger.error(f"Failed to load config file: {e}")
         raise
 
-def run_script(script_path: str, args: List[str] = None) -> str:
+def run_script(script_path: str, args: List[str] = None, timeout: Optional[int] = None) -> str:
     """
     Run a script and return its output.
+    
+    Args:
+        script_path: Path to the script to execute
+        args: Optional list of arguments to pass to the script
+        timeout: Timeout in seconds (uses DEFAULT_TIMEOUT if not specified)
     """
+    if timeout is None:
+        timeout = DEFAULT_TIMEOUT
+        
     try:
         if not os.path.isfile(script_path):
             raise FileNotFoundError(f"Script not found: {script_path}")
@@ -41,7 +53,7 @@ def run_script(script_path: str, args: List[str] = None) -> str:
             cmd,
             capture_output=True,
             text=True,
-            timeout=30  # Add timeout to prevent hanging
+            timeout=timeout
         )
         
         if result.returncode != 0:
@@ -49,6 +61,9 @@ def run_script(script_path: str, args: List[str] = None) -> str:
             return f"# ERROR: Script {os.path.basename(script_path)} failed\n"
             
         return result.stdout
+    except subprocess.TimeoutExpired:
+        logger.error(f"Script {script_path} timed out after {timeout} seconds")
+        return f"# ERROR: Script {os.path.basename(script_path)} timed out after {timeout}s\n"
     except Exception as e:
         logger.error(f"Error running script {script_path}: {e}")
         return f"# ERROR: Failed to run script {os.path.basename(script_path)}: {str(e)}\n"
@@ -60,9 +75,13 @@ def metrics():
     """
     output = []
     
+    # Get default timeout from config, or use DEFAULT_TIMEOUT
+    default_timeout = config.get('default_timeout', DEFAULT_TIMEOUT)
+    
     for script in config.get('scripts', []):
         script_path = script.get('path')
         script_args = script.get('args', [])
+        script_timeout = script.get('timeout', default_timeout)
         
         if not script_path:
             continue
@@ -71,7 +90,7 @@ def metrics():
         if not os.path.isabs(script_path):
             script_path = os.path.join(os.path.dirname(config_file), script_path)
         
-        result = run_script(script_path, script_args)
+        result = run_script(script_path, script_args, timeout=script_timeout)
         output.append(result)
     
     return Response('\n'.join(output), mimetype='text/plain')
