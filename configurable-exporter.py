@@ -60,18 +60,59 @@ def run_script(script_path: str, args: List[str] = None, timeout: Optional[int] 
 
 def add_instance_label(metrics_output: str, instance_id: Optional[str]) -> str:
     """
-    Append instance_id label properly into existing label set (comma-separated).
-    If no labels exist, create a new {instance_id="..."} block.
-    Comments (#) remain untouched.
+    Safely merge instance_id="..." into the metric's label set.
+    - Leaves comments (#) and blank lines untouched.
+    - If no labels exist, creates {instance_id="..."}.
+    - If labels exist, appends ,instance_id="..." before the closing }.
+    - Does not inject inside quoted strings.
+    - Skips if instance_id already present.
     """
     if not instance_id:
         return metrics_output
 
-    new_lines: List[str] = []
-    for raw_line in metrics_output.splitlines():
-        line = raw_line.rstrip("\n")
+    def has_instance_id(label_block: str) -> bool:
+        # crude but safe enough: look for instance_id= outside quotes
+        in_q = False
+        i = 0
+        while i < len(label_block):
+            c = label_block[i]
+            if c == '"':
+                in_q = not in_q
+            if not in_q and label_block.startswith('instance_id=', i):
+                return True
+            i += 1
+        return False
 
-        # Skip comments or blank lines
+    def find_labelset_bounds(token: str) -> Optional[tuple]:
+        """
+        token == '<metricname>' or '<metricname>{...}'
+        Return (open_idx, close_idx) of the top-level { ... } if present, else None.
+        Correctly skips braces inside quotes.
+        """
+        if "{" not in token:
+            return None
+        # find first '{'
+        open_idx = token.find("{")
+        in_q = False
+        depth = 0
+        for i in range(open_idx, len(token)):
+            ch = token[i]
+            if ch == '"':
+                in_q = not in_q
+            elif not in_q:
+                if ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                    if depth == 0:
+                        return (open_idx, i)
+        return None  # malformed; let caller treat as no-labels
+
+    new_lines = []
+    for raw in metrics_output.splitlines():
+        line = raw.rstrip("\n")
+
+        # pass through comments / blanks
         if not line.strip() or line.lstrip().startswith("#"):
             new_lines.append(line)
             continue
@@ -83,18 +124,35 @@ def add_instance_label(metrics_output: str, instance_id: Optional[str]) -> str:
 
         left, right = parts[0], parts[1]
 
-        if "{" in left and "}" in left:
-            # Insert instance_id before the last '}'
-            pos = left.rfind("}")
-            # check if last char before } is { or not to decide comma
-            if left[pos - 1] != "{":
-                new_left = f'{left[:pos]},{f"instance_id=\"{instance_id}\""}{left[pos:]}'
-            else:
-                new_left = f'{left[:pos]}instance_id="{instance_id}"{left[pos:]}'
-        else:
-            # No labels exist — create a new one
+        bounds = find_labelset_bounds(left)
+        if bounds is None:
+            # no labels: create one
             new_left = f'{left}{{instance_id="{instance_id}"}}'
+            new_lines.append(f"{new_left} {right}")
+            continue
 
+        open_i, close_i = bounds
+        before = left[:open_i+1]          # includes '{'
+        labels = left[open_i+1:close_i]   # inside braces
+        after = left[close_i:]            # includes '}'
+
+        # If already present, do nothing
+        if has_instance_id(labels):
+            new_lines.append(f"{left} {right}")
+            continue
+
+        # Determine if we need a comma (non-empty labels without trailing comma)
+        trimmed = labels.strip()
+        if trimmed == "":
+            merged = f'instance_id="{instance_id}"'
+        else:
+            # ensure there’s a comma between existing labels and the new one
+            merged = labels.rstrip()
+            if not merged.endswith(","):
+                merged += ","
+            merged += f'instance_id="{instance_id}"'
+
+        new_left = f"{before}{merged}{after}"
         new_lines.append(f"{new_left} {right}")
 
     return "\n".join(new_lines)
