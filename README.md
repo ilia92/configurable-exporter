@@ -10,18 +10,36 @@ pip3 install flask gunicorn pyyaml
 
 ## Step 1: Create Configuration File
 
-1. Create a configuration file (e.g., `exporter_config.yml`):
+The configuration file (`exporter_config.yml`) supports the following structure:
 
 ```yaml
+instance_id: name1          # Optional: tag all metrics with this label
+port: 9092                  # Optional: override default port (9092)
+default_timeout: 30         # Optional: override default 20s timeout for all scripts
+max_workers: 5              # Optional: number of parallel workers (default: number of scripts, max 10)
+
 scripts:
   - path: /path/to/your/script1.py
     args:
       - --format=prometheus
-  
-  - path: /path/to/your/script2.py
+
+  - path: ../relative/path/script2.py
     args:
       - --metric-type=custom
+    timeout: 60
 ```
+
+### 🆕 Configuration Options
+
+| Key | Description |
+|-----|--------------|
+| `instance_id` | Adds a global label `{instance_id="your_value"}` to every metric. Useful for multi-instance or multi-site monitoring. |
+| `port` | Optional port number for the HTTP `/metrics` endpoint. CLI `--port` overrides this. |
+| `default_timeout` | Global script timeout (default: 20s). |
+| `max_workers` | Number of scripts to run in parallel (default: script count, max 10). |
+| `scripts` | List of scripts to execute with optional arguments and per-script timeout. |
+
+---
 
 ## Step 2: Create a systemd Service File
 
@@ -79,61 +97,6 @@ sudo systemctl start configurable-exporter
 ```bash
 sudo systemctl enable configurable-exporter
 ```
-
-## Step 4: Manage the Service
-
-- To check the status of the service:
-
-```bash
-sudo systemctl status configurable-exporter
-```
-
-- To stop the service:
-
-```bash
-sudo systemctl stop configurable-exporter
-```
-
-- To restart the service:
-
-```bash
-sudo systemctl restart configurable-exporter
-```
-
-- To view logs:
-
-```bash
-sudo journalctl -u configurable-exporter
-```
-
-## Configuration File Format
-
-The configuration file (`exporter_config.yml`) supports the following structure:
-
-```yaml
-default_timeout: 30  # Optional: override default 20s timeout for all scripts
-max_workers: 5       # Optional: number of parallel workers (default: number of scripts, max 10)
-
-scripts:
-  - path: /absolute/path/to/script.py  # Absolute path to script
-    args:                              # Optional arguments
-      - --arg1
-      - --arg2=value
-
-  - path: ../relative/path/script.py   # Relative path to script
-    args:
-      - --format=prometheus
-    timeout: 60                        # Optional: per-script timeout override
-```
-
-**Configuration Options:**
-
-- `default_timeout`: Global timeout in seconds for all scripts (default: 20s)
-- `max_workers`: Maximum number of scripts to run in parallel (default: number of scripts, capped at 10)
-- `scripts`: List of scripts to execute
-  - `path`: Path to the script (absolute or relative to config file)
-  - `args`: Optional list of command-line arguments
-  - `timeout`: Optional per-script timeout override
 
 **Note:** Scripts are executed in parallel for better performance. The output is combined in the order scripts are defined in the configuration file.
 
