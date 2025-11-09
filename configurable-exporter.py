@@ -88,11 +88,26 @@ def add_instance_label(metrics_output: str, instance_id: Optional[str]) -> str:
         token == '<metricname>' or '<metricname>{...}'
         Return (open_idx, close_idx) of the top-level { ... } if present, else None.
         Correctly skips braces inside quotes.
+        Must find the FIRST '{' that is NOT inside a quoted string.
         """
         if "{" not in token:
             return None
-        # find first '{'
-        open_idx = token.find("{")
+
+        # Find the first '{' that's not inside quotes
+        in_q = False
+        open_idx = -1
+        for i in range(len(token)):
+            ch = token[i]
+            if ch == '"':
+                in_q = not in_q
+            elif not in_q and ch == "{":
+                open_idx = i
+                break
+
+        if open_idx == -1:
+            return None  # no '{' found outside quotes
+
+        # Now find matching '}' from open_idx onwards
         in_q = False
         depth = 0
         for i in range(open_idx, len(token)):
@@ -117,28 +132,61 @@ def add_instance_label(metrics_output: str, instance_id: Optional[str]) -> str:
             new_lines.append(line)
             continue
 
-        parts = line.split(None, 1)
-        if len(parts) < 2:
+        # Find where the metric name + labels ends (before the value)
+        # We need to find the end of the label set (if it exists) or metric name
+        # then take everything after that as the value
+
+        in_quotes = False
+        metric_end = -1
+
+        for i, ch in enumerate(line):
+            if ch == '"':
+                in_quotes = not in_quotes
+            elif not in_quotes:
+                if ch == '{':
+                    # Found label set, need to find its end
+                    depth = 1
+                    j = i + 1
+                    while j < len(line) and depth > 0:
+                        if line[j] == '"':
+                            in_quotes = not in_quotes
+                        elif not in_quotes:
+                            if line[j] == '{':
+                                depth += 1
+                            elif line[j] == '}':
+                                depth -= 1
+                        j += 1
+                    metric_end = j
+                    break
+                elif ch == ' ' or ch == '\t':
+                    # No labels, metric name ends here
+                    metric_end = i
+                    break
+
+        if metric_end == -1:
+            # No space found, entire line is metric name (no value)
             new_lines.append(line)
             continue
 
-        left, right = parts[0], parts[1]
+        left = line[:metric_end]
+        right = line[metric_end:]
 
+        # Check if this metric has labels
         bounds = find_labelset_bounds(left)
         if bounds is None:
             # no labels: create one
             new_left = f'{left}{{instance_id="{instance_id}"}}'
-            new_lines.append(f"{new_left} {right}")
+            new_lines.append(f"{new_left}{right}")
             continue
 
         open_i, close_i = bounds
-        before = left[:open_i+1]          # includes '{'
+        before_label = left[:open_i+1]          # includes '{'
         labels = left[open_i+1:close_i]   # inside braces
-        after = left[close_i:]            # includes '}'
+        after_label = left[close_i:]            # includes '}'
 
         # If already present, do nothing
         if has_instance_id(labels):
-            new_lines.append(f"{left} {right}")
+            new_lines.append(line)
             continue
 
         # Determine if we need a comma (non-empty labels without trailing comma)
@@ -146,14 +194,14 @@ def add_instance_label(metrics_output: str, instance_id: Optional[str]) -> str:
         if trimmed == "":
             merged = f'instance_id="{instance_id}"'
         else:
-            # ensure there’s a comma between existing labels and the new one
+            # ensure there's a comma between existing labels and the new one
             merged = labels.rstrip()
             if not merged.endswith(","):
                 merged += ","
             merged += f'instance_id="{instance_id}"'
 
-        new_left = f"{before}{merged}{after}"
-        new_lines.append(f"{new_left} {right}")
+        new_left = f"{before_label}{merged}{after_label}"
+        new_lines.append(f"{new_left}{right}")
 
     return "\n".join(new_lines)
 
@@ -177,6 +225,7 @@ def metrics():
             max_workers = max(1, min(int(configured_workers), MAX_WORKERS_CAP))
         except Exception:
             max_workers = 1
+
 
     tasks: List[Tuple[int, str, List[str], int]] = []
     for idx, script in enumerate(scripts):
