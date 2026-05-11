@@ -5,7 +5,7 @@ This guide will help you set up your Configurable Prometheus exporter to run as 
 ## Prerequisites
 
 ```bash
-pip3 install flask gunicorn pyyaml
+pip3 install -r requirements.txt
 ```
 
 ## Step 1: Create Configuration File
