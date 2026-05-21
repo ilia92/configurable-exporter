@@ -58,6 +58,21 @@ def run_script(script_path: str, args: List[str] = None, timeout: Optional[int] 
         logger.error(f"Error running script {script_path}: {e}")
         return f"# ERROR: Failed to run script {os.path.basename(script_path)}: {str(e)}\n"
 
+def normalize_labels(raw) -> Dict[str, str]:
+    """Accept add_labels as a dict or a list of 'key=value' strings."""
+    if not raw:
+        return {}
+    if isinstance(raw, dict):
+        return {k: str(v) for k, v in raw.items()}
+    if isinstance(raw, list):
+        result = {}
+        for item in raw:
+            if "=" in str(item):
+                k, _, v = str(item).partition("=")
+                result[k.strip()] = v.strip()
+        return result
+    return {}
+
 def add_labels_to_metrics(metrics_output: str, labels: Dict[str, str]) -> str:
     """
     Safely merge arbitrary labels into each metric line's label set.
@@ -213,7 +228,7 @@ def metrics():
 
     default_timeout = config.get('default_timeout', DEFAULT_TIMEOUT)
     instance_id = config.get('instance_id', None)
-    global_labels = {k: str(v) for k, v in (config.get('add_labels') or {}).items()}
+    global_labels = normalize_labels(config.get('add_labels'))
     if instance_id:
         global_labels.setdefault('instance_id', str(instance_id))
     scripts = config.get('scripts', []) or []
@@ -239,7 +254,7 @@ def metrics():
             script_path = os.path.join(os.path.dirname(config_file), script_path)
         args = script.get('args', [])
         timeout = script.get('timeout', default_timeout)
-        script_labels = {k: str(v) for k, v in (script.get('add_labels') or {}).items()}
+        script_labels = normalize_labels(script.get('add_labels'))
         merged_labels = {**global_labels, **script_labels}
         tasks.append((idx, script_path, args, timeout, merged_labels))
 
