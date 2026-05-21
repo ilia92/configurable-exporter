@@ -4,14 +4,21 @@ instance_id: name1          # Optional: tag all metrics with this label
 port: 9092                  # Optional: override default port (9092)
 default_timeout: 30         # Optional: override default 20s timeout for all scripts
 max_workers: 5              # Optional: number of parallel workers (default: number of scripts, max 10)
+add_labels:                 # Optional: global labels added to every metric
+  env: production
 
 scripts:
   - path: /absolute/path/to/script.py  # Absolute path to script
     args:                              # Optional arguments
       - --arg1
       - --arg2=value
+    add_labels:                        # Optional: per-script labels (merged with global)
+      id: "1"
+      region: us-east
 
   - path: ../relative/path/script.py   # Relative path to script
     args:
       - --format=prometheus
     timeout: 60                        # Optional: per-script timeout override
+    add_labels:
+      id: "2"

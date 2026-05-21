@@ -17,27 +17,36 @@ instance_id: name1          # Optional: tag all metrics with this label
 port: 9092                  # Optional: override default port (9092)
 default_timeout: 30         # Optional: override default 20s timeout for all scripts
 max_workers: 5              # Optional: number of parallel workers (default: number of scripts, max 10)
+add_labels:                 # Optional: global labels added to every metric
+  env: production
 
 scripts:
   - path: /path/to/your/script1.py
     args:
       - --format=prometheus
+    add_labels:             # Optional: per-script labels (merged with global add_labels)
+      id: "1"
+      region: us-east
 
   - path: ../relative/path/script2.py
     args:
       - --metric-type=custom
     timeout: 60
+    add_labels:
+      id: "2"
 ```
 
-### 🆕 Configuration Options
+### Configuration Options
 
-| Key | Description |
-|-----|--------------|
-| `instance_id` | Adds a global label `{instance_id="your_value"}` to every metric. Useful for multi-instance or multi-site monitoring. |
-| `port` | Optional port number for the HTTP `/metrics` endpoint. CLI `--port` overrides this. |
-| `default_timeout` | Global script timeout (default: 20s). |
-| `max_workers` | Number of scripts to run in parallel (default: script count, max 10). |
-| `scripts` | List of scripts to execute with optional arguments and per-script timeout. |
+| Key | Level | Description |
+|-----|-------|-------------|
+| `instance_id` | global | Adds `{instance_id="your_value"}` to every metric. Shorthand for a single global label. |
+| `add_labels` | global / per-script | Map of `key: value` labels to inject into every metric. Per-script labels are merged with global ones; per-script values win on conflict. |
+| `port` | global | Port for the HTTP `/metrics` endpoint. CLI `--port` overrides this. |
+| `default_timeout` | global | Script timeout in seconds (default: 20s). |
+| `max_workers` | global | Number of scripts to run in parallel (default: script count, max 10). |
+| `args` | per-script | List of arguments passed to the script. |
+| `timeout` | per-script | Per-script timeout override. |
 
 ---
 

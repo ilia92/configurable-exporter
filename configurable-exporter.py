@@ -58,27 +58,26 @@ def run_script(script_path: str, args: List[str] = None, timeout: Optional[int] 
         logger.error(f"Error running script {script_path}: {e}")
         return f"# ERROR: Failed to run script {os.path.basename(script_path)}: {str(e)}\n"
 
-def add_instance_label(metrics_output: str, instance_id: Optional[str]) -> str:
+def add_labels_to_metrics(metrics_output: str, labels: Dict[str, str]) -> str:
     """
-    Safely merge instance_id="..." into the metric's label set.
+    Safely merge arbitrary labels into each metric line's label set.
     - Leaves comments (#) and blank lines untouched.
-    - If no labels exist, creates {instance_id="..."}.
-    - If labels exist, appends ,instance_id="..." before the closing }.
+    - If no labels exist, creates {key="val",...}.
+    - If labels exist, appends new ones before the closing }.
     - Does not inject inside quoted strings.
-    - Skips if instance_id already present.
+    - Skips labels whose key is already present.
     """
-    if not instance_id:
+    if not labels:
         return metrics_output
 
-    def has_instance_id(label_block: str) -> bool:
-        # crude but safe enough: look for instance_id= outside quotes
+    def has_label_key(label_block: str, key: str) -> bool:
         in_q = False
         i = 0
         while i < len(label_block):
             c = label_block[i]
             if c == '"':
                 in_q = not in_q
-            if not in_q and label_block.startswith('instance_id=', i):
+            if not in_q and label_block.startswith(f'{key}=', i):
                 return True
             i += 1
         return False
@@ -132,10 +131,6 @@ def add_instance_label(metrics_output: str, instance_id: Optional[str]) -> str:
             new_lines.append(line)
             continue
 
-        # Find where the metric name + labels ends (before the value)
-        # We need to find the end of the label set (if it exists) or metric name
-        # then take everything after that as the value
-
         in_quotes = False
         metric_end = -1
 
@@ -144,7 +139,6 @@ def add_instance_label(metrics_output: str, instance_id: Optional[str]) -> str:
                 in_quotes = not in_quotes
             elif not in_quotes:
                 if ch == '{':
-                    # Found label set, need to find its end
                     depth = 1
                     j = i + 1
                     while j < len(line) and depth > 0:
@@ -159,48 +153,52 @@ def add_instance_label(metrics_output: str, instance_id: Optional[str]) -> str:
                     metric_end = j
                     break
                 elif ch == ' ' or ch == '\t':
-                    # No labels, metric name ends here
                     metric_end = i
                     break
 
         if metric_end == -1:
-            # No space found, entire line is metric name (no value)
             new_lines.append(line)
             continue
 
         left = line[:metric_end]
         right = line[metric_end:]
 
-        # Check if this metric has labels
         bounds = find_labelset_bounds(left)
+
+        # Build the label pairs to inject, skipping any key already present
         if bounds is None:
-            # no labels: create one
-            new_left = f'{left}{{instance_id="{instance_id}"}}'
-            new_lines.append(f"{new_left}{right}")
-            continue
+            existing = ""
+        else:
+            open_i, close_i = bounds
+            existing = left[open_i+1:close_i]
 
-        open_i, close_i = bounds
-        before_label = left[:open_i+1]          # includes '{'
-        labels = left[open_i+1:close_i]   # inside braces
-        after_label = left[close_i:]            # includes '}'
+        to_inject = [
+            f'{k}="{v}"' for k, v in labels.items()
+            if not has_label_key(existing, k)
+        ]
 
-        # If already present, do nothing
-        if has_instance_id(labels):
+        if not to_inject:
             new_lines.append(line)
             continue
 
-        # Determine if we need a comma (non-empty labels without trailing comma)
-        trimmed = labels.strip()
-        if trimmed == "":
-            merged = f'instance_id="{instance_id}"'
-        else:
-            # ensure there's a comma between existing labels and the new one
-            merged = labels.rstrip()
-            if not merged.endswith(","):
-                merged += ","
-            merged += f'instance_id="{instance_id}"'
+        inject_str = ",".join(to_inject)
 
-        new_left = f"{before_label}{merged}{after_label}"
+        if bounds is None:
+            new_left = f'{left}{{{inject_str}}}'
+        else:
+            open_i, close_i = bounds
+            before_label = left[:open_i+1]
+            after_label = left[close_i:]
+            trimmed = existing.strip()
+            if trimmed == "":
+                merged = inject_str
+            else:
+                merged = existing.rstrip()
+                if not merged.endswith(","):
+                    merged += ","
+                merged += inject_str
+            new_left = f"{before_label}{merged}{after_label}"
+
         new_lines.append(f"{new_left}{right}")
 
     return "\n".join(new_lines)
@@ -215,6 +213,9 @@ def metrics():
 
     default_timeout = config.get('default_timeout', DEFAULT_TIMEOUT)
     instance_id = config.get('instance_id', None)
+    global_labels = {k: str(v) for k, v in (config.get('add_labels') or {}).items()}
+    if instance_id:
+        global_labels.setdefault('instance_id', str(instance_id))
     scripts = config.get('scripts', []) or []
 
     configured_workers = config.get('max_workers', None)
@@ -227,7 +228,7 @@ def metrics():
             max_workers = 1
 
 
-    tasks: List[Tuple[int, str, List[str], int]] = []
+    tasks: List[Tuple[int, str, List[str], int, Dict[str, str]]] = []
     for idx, script in enumerate(scripts):
         if not isinstance(script, dict):
             continue
@@ -238,7 +239,9 @@ def metrics():
             script_path = os.path.join(os.path.dirname(config_file), script_path)
         args = script.get('args', [])
         timeout = script.get('timeout', default_timeout)
-        tasks.append((idx, script_path, args, timeout))
+        script_labels = {k: str(v) for k, v in (script.get('add_labels') or {}).items()}
+        merged_labels = {**global_labels, **script_labels}
+        tasks.append((idx, script_path, args, timeout, merged_labels))
 
     if not tasks:
         return Response("# No scripts configured\n", mimetype='text/plain')
@@ -247,22 +250,22 @@ def metrics():
     if max_workers > 1:
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {
-                executor.submit(run_script, sp, sa, t): idx
-                for (idx, sp, sa, t) in tasks
+                executor.submit(run_script, sp, sa, t): (idx, lbl)
+                for (idx, sp, sa, t, lbl) in tasks
             }
             for f in as_completed(futures):
-                idx = futures[f]
+                idx, lbl = futures[f]
                 try:
                     result = f.result()
                 except Exception as e:
                     logger.exception(f"Exception running script index {idx}: {e}")
                     result = f"# ERROR: Exception running script {idx}\n"
-                result = add_instance_label(result, instance_id)
+                result = add_labels_to_metrics(result, lbl)
                 output_chunks.append((idx, result))
     else:
-        for idx, sp, sa, t in tasks:
+        for idx, sp, sa, t, lbl in tasks:
             result = run_script(sp, sa, timeout=t)
-            result = add_instance_label(result, instance_id)
+            result = add_labels_to_metrics(result, lbl)
             output_chunks.append((idx, result))
 
     output_chunks.sort(key=lambda x: x[0])
