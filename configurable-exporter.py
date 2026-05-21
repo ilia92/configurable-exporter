@@ -67,7 +67,10 @@ def normalize_labels(raw) -> Dict[str, str]:
     if isinstance(raw, list):
         result = {}
         for item in raw:
-            if "=" in str(item):
+            if isinstance(item, dict):
+                for k, v in item.items():
+                    result[str(k).strip()] = str(v).strip()
+            elif "=" in str(item):
                 k, _, v = str(item).partition("=")
                 result[k.strip()] = v.strip()
         return result
